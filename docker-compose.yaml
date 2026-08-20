@@ -1,0 +1,43 @@
+services:
+  # Public MCP proxy
+  mcp-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/your-org/mcp-bearer-proxy:latest
+    container_name: mcp-bearer-proxy
+    restart: unless-stopped
+
+    ports:
+      - "${MCP_PROXY_PORT:-8787}:8787"
+
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-https://your-domain.example}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-replace-with-strong-admin-token}
+      FIXED_TOKEN: ${FIXED_TOKEN:-replace-with-strong-client-token}
+      OAUTH_REDIRECT_ALLOWLIST: ${OAUTH_REDIRECT_ALLOWLIST:-}
+      HEALTH_SHOW_SERVERS: ${HEALTH_SHOW_SERVERS:-false}
+      DATA_FILE: /data/servers.json
+      PORT: 8787
+      HOSTNAME: 0.0.0.0
+
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8787/health && touch /data/.write-test && rm /data/.write-test"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional upstream in the same compose network.
+  github-mcp:
+    image: ghcr.io/github/github-mcp-server:latest
+    container_name: github-mcp-server
+    profiles: ["github"]
+    restart: unless-stopped
+
+    command: ["http"]
+
+    environment:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}

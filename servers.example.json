@@ -1,0 +1,7 @@
+{
+  "example-server": {
+    "upstream": "https://your-upstream-mcp.example.com/mcp",
+    "bearer": "replace-with-upstream-bearer-token"
+  }
+}
+
