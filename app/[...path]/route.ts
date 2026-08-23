@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FIXED_TOKEN, PUBLIC_URL } from '@/lib/config';
+import type { StdioServerEntry } from '@/lib/config';
 import { getBearerToken, secureTokenEquals } from '@/lib/auth';
 import { getServers } from '@/lib/servers';
+import { sendRequest, sendNotification, subscribe } from '@/lib/stdio-manager';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +63,17 @@ async function proxy(
       }
     );
   }
+
+  // -------------------------------------------------------------------------
+  // stdio bridge
+  // -------------------------------------------------------------------------
+  if (target.type === 'stdio') {
+    return handleStdio(req, serverKey, target);
+  }
+
+  // -------------------------------------------------------------------------
+  // HTTP upstream proxy (original behaviour)
+  // -------------------------------------------------------------------------
 
   // Build the upstream URL, preserving any sub-path and query string.
   const rest = parts.slice(1).join('/');
@@ -131,6 +144,115 @@ async function proxy(
     statusText: upstream.statusText,
     headers: resHeaders,
   });
+}
+
+// ---------------------------------------------------------------------------
+// stdio ↔ HTTP bridge handler
+// ---------------------------------------------------------------------------
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+} as const;
+
+async function handleStdio(
+  req: NextRequest,
+  key: string,
+  entry: StdioServerEntry,
+): Promise<NextResponse> {
+  // SSE subscription — client wants server-initiated notifications.
+  if (req.method === 'GET' && (req.headers.get('accept') ?? '').includes('text/event-stream')) {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = writable.getWriter();
+    const enc = new TextEncoder();
+
+    // Confirm the connection immediately.
+    writer.write(enc.encode(': connected\n\n')).catch(() => {});
+
+    const unsub = subscribe(key, entry, (msg) => {
+      const chunk = enc.encode(`data: ${JSON.stringify(msg)}\n\n`);
+      writer.write(chunk).catch(() => {});
+    });
+
+    req.signal.addEventListener('abort', () => {
+      unsub();
+      writer.close().catch(() => {});
+    });
+
+    return new NextResponse(readable, {
+      status: 200,
+      headers: {
+        ...CORS_HEADERS,
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  }
+
+  if (req.method === 'POST') {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400, headers: CORS_HEADERS });
+    }
+
+    // Batch of messages.
+    if (Array.isArray(body)) {
+      const results = await Promise.all(
+        (body as Record<string, unknown>[]).map(async (msg) => {
+          if (msg.id != null) {
+            try {
+              return await sendRequest(key, entry, msg);
+            } catch (err) {
+              return {
+                jsonrpc: '2.0',
+                id: msg.id,
+                error: { code: -32603, message: (err as Error).message },
+              };
+            }
+          } else {
+            sendNotification(key, entry, msg);
+            return null;
+          }
+        }),
+      );
+      const responses = results.filter(Boolean);
+      if (responses.length === 0) {
+        return new NextResponse(null, { status: 202, headers: CORS_HEADERS });
+      }
+      return NextResponse.json(responses, { headers: CORS_HEADERS });
+    }
+
+    // Single message.
+    const msg = body as Record<string, unknown>;
+    if (msg.id != null) {
+      try {
+        const response = await sendRequest(key, entry, msg);
+        return NextResponse.json(response, { headers: CORS_HEADERS });
+      } catch (err) {
+        return NextResponse.json(
+          {
+            jsonrpc: '2.0',
+            id: msg.id,
+            error: { code: -32603, message: (err as Error).message },
+          },
+          { status: 500, headers: CORS_HEADERS },
+        );
+      }
+    } else {
+      // Notification — fire-and-forget.
+      sendNotification(key, entry, msg);
+      return new NextResponse(null, { status: 202, headers: CORS_HEADERS });
+    }
+  }
+
+  return NextResponse.json(
+    { error: 'Method not supported for stdio servers' },
+    { status: 405, headers: CORS_HEADERS },
+  );
 }
 
 // MCP clients may use any of these methods against the proxy.

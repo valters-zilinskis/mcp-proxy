@@ -1,9 +1,24 @@
 import path from 'node:path';
 
-export interface ServerEntry {
+/** Classic HTTP upstream entry (original behaviour). */
+export interface HttpServerEntry {
+  type?: 'http'; // optional for backward-compat — absence means http
   upstream: string;
   bearer: string;
 }
+
+/** Stdio process entry — the proxy spawns the process and bridges JSON-RPC. */
+export interface StdioServerEntry {
+  type: 'stdio';
+  /** Executable to spawn (e.g. "npx", "python", "/usr/local/bin/my-mcp"). */
+  command: string;
+  /** Argument list passed to the command. */
+  args?: string[];
+  /** Extra environment variables merged into the child process env. */
+  env?: Record<string, string>;
+}
+
+export type ServerEntry = HttpServerEntry | StdioServerEntry;
 
 export type Servers = Record<string, ServerEntry>;
 

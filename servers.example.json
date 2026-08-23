@@ -1,7 +1,14 @@
 {
-  "example-server": {
+  "example-http-server": {
+    "type": "http",
     "upstream": "https://your-upstream-mcp.example.com/mcp",
     "bearer": "replace-with-upstream-bearer-token"
+  },
+  "example-stdio-server": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    "env": {}
   }
 }
 

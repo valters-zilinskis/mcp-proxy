@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ADMIN_TOKEN } from '@/lib/config';
 import { getBearerToken, secureTokenEquals } from '@/lib/auth';
 import { getServers, saveServers } from '@/lib/servers';
+import { killProcess } from '@/lib/stdio-manager';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,8 @@ export async function DELETE(
         { status: 500 }
       );
     }
+    // If it was a stdio server, terminate the child process.
+    if (removed.type === 'stdio') killProcess(key);
     return NextResponse.json({ ok: true, message: `Deleted ${key}` });
   }
 
